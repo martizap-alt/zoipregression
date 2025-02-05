@@ -1,0 +1,122 @@
+library(readr)
+library(dplyr)
+library(tidyverse)
+
+insr_claim <- read_delim("Documents/insr_claim.csv", delim=";") 
+insr_claim <- insr_claim %>%
+              mutate(CAR_TYPE = case_when(CAR_TYPE=='Minivan' ~ 1,
+                                          CAR_TYPE=='Van' ~ 1,
+                                          CAR_TYPE=='Pickup' ~ 1,
+                                          CAR_TYPE=='Truck' ~ 1,
+                                          CAR_TYPE=='Sports Car' ~ 0,
+                                          CAR_TYPE=='SUV' ~ 0)) %>%
+              mutate(CAR_USE = case_when(CAR_USE=='Private' ~ 1,
+                                         CAR_USE=='Commercial' ~ 0))
+
+#X = insr_claim[c("CAR_USE", "CAR_TYPE")]
+#y = insr_claim["CLM_FREQ"]
+#output = logit.EM(y, X)
+
+covL1 <- insr_claim$CAR_USE
+covL2 <- insr_claim$INS_AGE
+covp1 <- insr_claim$CAR_USE
+covp2 <- insr_claim$INS_AGE
+covq1 <- insr_claim$CAR_USE
+covq2 <- insr_claim$INS_AGE
+y <- insr_claim$CLM_FREQ
+#trueMeans<-exp(1.5-2*covL)
+#probability<-exp(-1.5+covp*2)/(1+exp(-1.5+covp*2))
+#U<-runif(n,0,1)
+#y <- rpois(n,trueMeans)
+#y[U<probability] <- 0
+
+#initialize values
+initial.l<-glm(y[y>1] ~ 1, family = "poisson")$coefficients
+Beta0.l<-as.numeric(initial.l[1])
+Beta1.l<-as.numeric(initial.l[2])
+Beta2.l<-as.numeric(initial.l[3])
+
+# Beta0.p<-(sum(y==0)-sum(exp(Beta0.l+Beta1.l*covL1+Beta2.l*covL2)))/length(y)
+# Beta1.p<-(sum(y==1)-sum(exp(Beta0.l+Beta1.l*covL1+Beta2.l*covL2)))/length(y)
+# Beta2.p<-(sum(y>1)-sum(exp(Beta0.l+Beta1.l*covL1+Beta2.l*covL2)))/length(y)
+# 
+# Beta0.q<-(sum(y==0)-sum(exp(Beta0.l+Beta1.l*covL1+Beta2.l*covL2)))/length(y)
+# Beta1.q<-(sum(y==1)-sum(exp(Beta0.l+Beta1.l*covL1+Beta2.l*covL2)))/length(y)
+# Beta2.q<-(sum(y>1)-sum(exp(Beta0.l+Beta1.l*covL1+Beta2.l*covL2)))/length(y)
+Beta0.l<-0
+
+Beta0.p<-0
+
+Beta0.q<-0
+
+#going to use the EM algorithm, so zhat is going to be the latent variable, initialize it here.  
+
+zhat1 <- rep(0,length(y))
+zhat2 <- rep(0,length(y))
+vessel <- rep(1,length(y))
+result <- data.frame(beta0L=0, beta0p=0, beta0q=0)
+for (i in 1:100) {
+  
+#rep through the EM algorithm 100 times
+  
+  alphap <- exp(Beta0.p)/(1+exp(Beta0.p))
+  alphaq <- exp(Beta0.q)/(1+exp(Beta0.q))
+  
+  #E step
+  zhat1[y==0]<-(alphap*alphaq)/(alphap*alphaq+(exp(-(exp(Beta0.l)))*(1+exp(Beta0.p))^(-1)))*vessel[y==0]
+  zhat1[y==1]<-alphap*((1+exp(Beta0.q))^(-1))/((alphap*((1+exp(Beta0.q))^(-1)))+(((1+exp((Beta0.p)))^(-1))*exp(Beta0.l)*(exp(-(exp(Beta0.l))))))*vessel[y==1]
+    
+  zhat2[y==0]<-(alphap*alphaq+(((1+exp(Beta0.p))^(-1))*alphaq*(exp(-(exp(Beta0.l))))))/((alphap*alphaq)+(((1+exp(Beta0.p))^(-1))*(exp(-(exp(Beta0.l))))))*vessel[y==0]
+  zhat2[y==1]<-((1+exp(Beta0.p))^(-1))*alphaq*exp(Beta0.l)*(exp(-(exp(Beta0.l))))/(alphap*((1+exp(Beta0.q))^(-1))+(((1+exp(Beta0.p))^(-1))*exp(Beta0.l)*(exp(-(exp(Beta0.l))))))*vessel[y==1]
+  zhat2[y>1]<-alphaq*vessel[y>1]
+  
+  #M step for the coefficients that estimate the mean (lambda)
+  lValues_source<-glm(y ~ 1, family = "poisson",weights=zhat1)
+  lValues <- lValues_source$coefficients
+  lValues_SE <- summary(lValues_source)$coefficients[,2]
+  
+  Beta0.l<-as.numeric(lValues[1])
+  SEBeta0.l<-as.numeric(lValues_SE[1])
+  # Beta1.l<-as.numeric(lValues[2])
+  # Beta2.l<-as.numeric(lValues[3])
+  
+  
+  #M step for the coefficients that estimate the p value
+  y_star1<-as.numeric(y!=0)
+  weightsV1<-zhat1
+  # covariates1<-c(covp1)
+  # covariates2<-c(covp2)
+  
+  pValues_source<- glm(y_star1~1,family=binomial("logit"),weights=weightsV1)
+  pValues<- pValues_source$coefficients
+  pValues_SE <- summary(pValues_source)$coefficients[,2]
+  
+  Beta0.p<-as.numeric(pValues[1])
+  SEBeta0.p<-as.numeric(pValues_SE[1])
+  # Beta1.p<-as.numeric(pValues[2])
+  # Beta2.p<-as.numeric(pValues[3])
+  
+  y_star2<-as.numeric(y!=1)
+  weightsV2<-zhat2
+  # covariates1<-covp1
+  # covariates2<-covp2
+  qValues_source<- glm(y_star2~1,family=binomial ,weights=weightsV2)
+  qValues<- qValues_source$coefficients
+  qValues_SE <- summary(qValues_source)$coefficients[,2]
+  
+  Beta0.q<-as.numeric(qValues[1])
+  SEBeta0.q<-as.numeric(qValues_SE[1])
+  # Beta1.q<-as.numeric(qValues[2])
+  # Beta2.q<-as.numeric(qValues[3])
+  
+  # y_star<-c(y[y>1],y[y==0],y[y==1])
+  # weightsV1<-c(zhat1[y>1],zhat1[y==1],zhat1[y==0])
+  # weightsV2<-c(zhat2[y>1],zhat2[y==1],zhat2[y==0])
+  # covariates1<-c(covp1[y>1],covp1[y==0],covp1[y==1])
+  # covariates2<-c(covp2[y>1],covp2[y==0],covp2[y==1])
+  
+  temp_result <- data.frame(beta0L=Beta0.l, beta0p=Beta0.p, beta0q=Beta0.q)
+  result <- rbind(result, temp_result)
+}
+cat("Iteration: ",i, "  Beta0.l: ",Beta0.l, "  Beta0.p: ", Beta0.p,"  Beta0.q: ",Beta0.q,"\n")
+cat("SEbeta0.l: ",SEBeta0.l, "SEbeta0.p: ",SEBeta0.p, "SEbeta0.q: ",SEBeta0.q)
